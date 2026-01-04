@@ -4,7 +4,7 @@
 <script>
 const token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJvcmRlcl9pZCI6Im9yZGVyXzEyMyIsImV4cCI6MTc2NzI5MDIxOX0.ekvtDFgQI2_f_vekXwVZ6rYXdubwFmJtWbZY9a7Nw54";
 
-const ws = new WebSocket(`ws://localhost:9000/ws/order_123?token=${token}`);
+const ws = new WebSocket(`ws://localhost:9000/ws?token=${token}`);
 
 ws.onopen = () => {
     console.log("Connected");

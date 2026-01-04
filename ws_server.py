@@ -6,6 +6,9 @@ import json
 from typing import Dict, List
 from jwt_auth import verify_jwt
 from contextlib import asynccontextmanager
+from config import CORS_CONFIG, ENV
+
+print(f"Starting WS server in {ENV} mode with CORS:", CORS_CONFIG)
 
 
 # ==========================================================
@@ -25,61 +28,68 @@ class Connection:
         self.last_active = time.time()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print("Starting WebSocket server...")
+from pydantic import BaseModel
+from typing import Any
 
-    # State
-    app.channels: Dict[str, List[Connection]] = {}
-
-    # Background cleanup
-    async def cleanup_task():
-        while True:
-            now = time.time()
-            to_remove_channels = []
-
-            for channel, connections in list(app.channels.items()):
-                dead_connections = []
-                for conn in list(connections):
-                    if now - conn.last_active > IDLE_TIMEOUT:
-                        print(f"Auto-closing idle connection in channel '{channel}'")
-                        try:
-                            await conn.ws.close()
-                        except:
-                            pass
-                        dead_connections.append(conn)
-
-                for dead in dead_connections:
-                    connections.remove(dead)
-
-                # Remove empty channels
-                if len(connections) == 0:
-                    print(f"Removing empty channel: {channel}")
-                    to_remove_channels.append(channel)
-
-            for ch in to_remove_channels:
-                del app.state.channels[ch]
-
-            await asyncio.sleep(10)
-
-    cleanup = asyncio.create_task(cleanup_task())
-
-    # Hand over to the app
-    yield
-
-    # Shutdown
-    cleanup.cancel()
-    print("Stopping WebSocket server...")
-    for channel, conns in app.state.channels.items():
-        for conn in conns:
-            try:
-                await conn.ws.close()
-            except:
-                pass
+class WebhookPayload(BaseModel):
+    channel: str
+    message: Any
 
 
-app = FastAPI(lifespan=lifespan,
-              title="WebSocket Service",
+# @asynccontextmanager
+# async def lifespan(app: FastAPI):
+#     print("Starting WebSocket server...")
+
+#     # State
+#     app.channels: Dict[str, List[Connection]] = {}
+
+#     # Background cleanup
+#     async def cleanup_task():
+#         while True:
+#             now = time.time()
+#             to_remove_channels = []
+
+#             for channel, connections in list(app.channels.items()):
+#                 dead_connections = []
+#                 for conn in list(connections):
+#                     if now - conn.last_active > IDLE_TIMEOUT:
+#                         print(f"Auto-closing idle connection in channel '{channel}'")
+#                         try:
+#                             await conn.ws.close()
+#                         except:
+#                             pass
+#                         dead_connections.append(conn)
+
+#                 for dead in dead_connections:
+#                     connections.remove(dead)
+
+#                 # Remove empty channels
+#                 if len(connections) == 0:
+#                     print(f"Removing empty channel: {channel}")
+#                     to_remove_channels.append(channel)
+
+#             for ch in to_remove_channels:
+#                 del app.state.channels[ch]
+
+#             await asyncio.sleep(10)
+
+#     cleanup = asyncio.create_task(cleanup_task())
+
+#     # Hand over to the app
+#     yield
+
+#     # Shutdown
+#     cleanup.cancel()
+#     print("Stopping WebSocket server...")
+#     for channel, conns in app.state.channels.items():
+#         for conn in conns:
+#             try:
+#                 await conn.ws.close()
+#             except:
+#                 pass
+
+
+app = FastAPI(title="WebSocket Service",
               description="WS hub + webhook from Odoo + JWT Auth")
 
 # Allow FE apps
@@ -106,20 +116,20 @@ async def websocket_endpoint(ws: WebSocket):
 
     token = ws.query_params.get("token")
 
-    if not token:
-        await ws.close(code=4401, reason="Missing token")
-        return
+    # if not token:
+    #     await ws.close(code=4401, reason="Missing token")
+    #     return
 
-    # 🔐 Verify JWT
-    try:
-        claims = verify_jwt(token)
-    except Exception as e:
-        await ws.close(code=4401, reason=str(e))
-        return
+    # # 🔐 Verify JWT
+    # try:
+    #     claims = verify_jwt(token)
+    # except Exception as e:
+    #     await ws.close(code=4401, reason=str(e))
+    #     return
 
-    order_id = claims.get("order_id")
+    # order_id = claims.get("order_id")
 
-    print(f"WS Connected to Order {order_id}")
+    # print(f"WS Connected to Order {order_id}")
 
 
     await ws.accept()
@@ -154,13 +164,18 @@ async def websocket_endpoint(ws: WebSocket):
 # ====================================
 #            WEBHOOK
 # ====================================
-@app.post("/webhook")
+@app.get("/health")
 async def webhook(request: Request):
-    body = await request.json()
-    print("Webhook received:", body)
+    return {
+        "status": "ok"
+    }
 
-    channel = body.get("channel")
-    message = body.get("message")
+@app.post("/webhook")
+async def webhook(payload: WebhookPayload):
+    print("Webhook received:", payload.model_dump())
+
+    channel = payload.channel
+    message = payload.message
 
     if not channel:
         return {"error": "Missing 'channel'"}
@@ -170,7 +185,7 @@ async def webhook(request: Request):
 
     for ws in conns:
         try:
-            # Gửi tin từ Odoo sang FE
+            # Gửi tin
             await ws.send_json({
                 "type": "odoo_push",
                 "channel": channel,
